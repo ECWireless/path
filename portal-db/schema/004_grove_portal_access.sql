@@ -45,7 +45,7 @@ TO authenticated_user;
 -- Grant access to public tables used by the UI (read-only, contains no sensitive data)
 GRANT SELECT ON TABLE
     services,
-    portal_plans,
+    portal_plans
 TO authenticated_user;
 
 -- Grant access to portal_user_auth for JWT sub claim lookup
@@ -61,27 +61,129 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated_user;
 CREATE OR REPLACE FUNCTION api.current_portal_user_id()
 RETURNS VARCHAR(36) AS $$
 DECLARE
-  auth_sub TEXT;
-  user_id VARCHAR(36);
+    auth_sub TEXT;
+    user_id VARCHAR(36);
 BEGIN
-  -- Extract 'sub' claim from JWT (e.g., "auth0|6536b4a897072b320a2d41ea")
-  auth_sub := current_setting('request.jwt.claims', true)::json->>'sub';
-  
-  IF auth_sub IS NULL THEN
-    RETURN NULL;
-  END IF;
-  
-  -- Look up portal_user_id from portal_user_auth
-  SELECT pua.portal_user_id INTO user_id
-  FROM portal_user_auth pua
-  WHERE pua.auth_provider_user_id = auth_sub
-  LIMIT 1;
-  
-  RETURN user_id;
+    -- Prefer upstream Auth0 subject if provided, otherwise fallback to standard sub
+    auth_sub := COALESCE(
+        current_setting('request.jwt.claims', true)::json->>'auth0_sub',
+        current_setting('request.jwt.claims', true)::json->>'sub'
+    );
+
+    IF auth_sub IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    -- Look up portal_user_id from portal_user_auth
+    SELECT pua.portal_user_id INTO user_id
+    FROM public.portal_user_auth pua
+    WHERE pua.auth_provider_user_id = auth_sub
+    LIMIT 1;
+
+    RETURN user_id;
 END;
 $$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
 
 COMMENT ON FUNCTION api.current_portal_user_id() IS 'Extracts portal_user_id from Auth0 JWT sub claim by looking up auth_provider_user_id';
+
+-- =========================================================================
+-- RPC: Ensure portal user and mapping (admin-triggered, explicit params)
+-- =========================================================================
+-- Intended for backend service calls using a portal_db_admin JWT via PostgREST.
+-- Upserts a portal_users row by email and ensures a portal_user_auth mapping
+-- for the provided provider/type/user_id.
+--
+-- Usage (PostgREST):
+--   POST /rpc/ensure_portal_user
+--   {
+--     "p_email": "user@example.com",
+--     "p_auth_provider": "auth0",          -- or 'clerk'
+--     "p_auth_type": "auth0_username",     -- or 'auth0_github', 'clerk_google', etc.
+--     "p_auth_provider_user_id": "auth0|abc123",
+--     "p_federated": true                   -- optional
+--   }
+-- Returns: { portal_user_id, portal_user_email }
+
+CREATE OR REPLACE FUNCTION api.ensure_portal_user(
+    p_email TEXT,
+    p_auth_provider portal_auth_provider,
+    p_auth_type portal_auth_type,
+    p_auth_provider_user_id TEXT,
+    p_federated BOOL DEFAULT FALSE
+)
+RETURNS TABLE (
+  portal_user_id    VARCHAR(36),
+  portal_user_email VARCHAR(255)
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+VOLATILE
+SET search_path = public, pg_catalog
+AS $$
+DECLARE
+    v_user_id VARCHAR(36);
+    v_deleted_at TIMESTAMPTZ;
+BEGIN
+    IF p_email IS NULL OR length(trim(p_email)) = 0 THEN
+        RAISE EXCEPTION 'p_email is required';
+    END IF;
+    IF p_auth_provider_user_id IS NULL OR length(trim(p_auth_provider_user_id)) = 0 THEN
+        RAISE EXCEPTION 'p_auth_provider_user_id is required';
+    END IF;
+
+    -- Step 1: Ensure a portal_users row exists for p_email
+    -- Try to find any existing user by email (including soft-deleted)
+    SELECT pu.portal_user_id, pu.deleted_at
+        INTO v_user_id, v_deleted_at
+    FROM public.portal_users pu
+    WHERE pu.portal_user_email = p_email
+    LIMIT 1;
+
+        IF v_user_id IS NULL THEN
+            -- No existing user, create a new one
+            INSERT INTO public.portal_users AS pu (portal_user_id, portal_user_email, signed_up)
+            VALUES (gen_random_uuid()::text, p_email, TRUE)
+            RETURNING pu.portal_user_id INTO v_user_id;
+        ELSIF v_deleted_at IS NOT NULL THEN
+            -- Revive soft-deleted user for this email
+            UPDATE public.portal_users AS pu
+                 SET deleted_at = NULL,
+                         signed_up   = TRUE,
+                         updated_at  = CURRENT_TIMESTAMP
+             WHERE pu.portal_user_id = v_user_id;
+    END IF;
+
+            -- Step 2: Ensure a portal_user_auth mapping exists for this provider/type/user_id
+            UPDATE public.portal_user_auth AS pua
+                 SET portal_user_id       = v_user_id,
+                         portal_auth_provider = p_auth_provider,
+                         portal_auth_type     = p_auth_type,
+                         federated            = COALESCE(p_federated, FALSE),
+                         updated_at           = CURRENT_TIMESTAMP
+             WHERE pua.auth_provider_user_id = p_auth_provider_user_id;
+
+            IF NOT FOUND THEN
+                INSERT INTO public.portal_user_auth (
+                    portal_user_id,
+                    portal_auth_provider,
+                    portal_auth_type,
+                    auth_provider_user_id,
+                    federated
+                ) VALUES (
+                    v_user_id,
+                    p_auth_provider,
+                    p_auth_type,
+                    p_auth_provider_user_id,
+                    COALESCE(p_federated, FALSE)
+                );
+            END IF;
+
+    -- Return minimal result shape expected by RPC
+    RETURN QUERY SELECT v_user_id, p_email::varchar(255);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION api.ensure_portal_user(TEXT, portal_auth_provider, portal_auth_type, TEXT, BOOL) TO portal_db_admin, anon;
 
 -- ============================================================================
 -- RLS POLICIES: portal_accounts (user-scoped access)

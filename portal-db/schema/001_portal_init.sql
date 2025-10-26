@@ -27,8 +27,8 @@ CREATE TYPE allowlist_type AS ENUM ('service_id', 'contract', 'origin');
 --
 -- Envoy Gateway has native support for other OIDC authentication types: https://gateway.envoyproxy.io/docs/tasks/security/oidc/
 -- For legacy support, only adding auth0 and its relevant types
-CREATE TYPE portal_auth_provider AS ENUM ('auth0');
-CREATE TYPE portal_auth_type AS ENUM ('auth0_github', 'auth0_username', 'auth0_google');
+CREATE TYPE portal_auth_provider AS ENUM ('auth0', 'clerk');
+CREATE TYPE portal_auth_type AS ENUM ('auth0_github', 'auth0_username', 'auth0_google', 'clerk_google');
 
 -- ============================================================================
 -- CORE ORGANIZATIONAL TABLES

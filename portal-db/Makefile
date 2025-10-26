@@ -113,7 +113,8 @@ quickstart: ## Quick start guide for Portal DB (shows commands to run)
 # ============================================================================
 
 .PHONY: portal-db-up
-portal-db-up: check-jwks ## Start all Portal DB services
+# portal-db-up: check-jwks ## Start all Portal DB services
+portal-db-up: ## Start all Portal DB services
 	@echo "🚀 Starting all Portal DB services..."
 	docker compose up -d
 	@echo "✅ Services started!"
@@ -212,18 +213,18 @@ grove-download-jwks: ## 🌿 GROVE EMPLOYEES ONLY - Download JWKS from 1Password
 	@op item get 6hh3pjg7m2qdpkg26kf6gzmjs4 --format json | jq -r '.fields[] | select(.id == "notesPlain") | .value' | jq '.' > api/jwks.json
 	@echo "✅ JWKS downloaded to api/jwks.json"
 
-.PHONY: check-jwks
-check-jwks: ## Check if api/jwks.json exists, show instructions if missing
-	@if [ ! -f api/jwks.json ]; then \
-		echo "❌ $(YELLOW)api/jwks.json not found!$(RESET)"; \
-		echo ""; \
-		echo "$(BOLD)🌿 GROVE EMPLOYEES: Download the JWKS file from 1Password:$(RESET)"; \
-		echo "   $(CYAN)make grove-download-jwks$(RESET)"; \
-		echo ""; \
-		echo "$(YELLOW)Note: Requires 1Password CLI (op) to be installed and authenticated.$(RESET)"; \
-		exit 1; \
-	fi
-	@echo "✅ api/jwks.json found"
+# .PHONY: check-jwks
+# check-jwks: ## Check if api/jwks.json exists, show instructions if missing
+# 	@if [ ! -f api/jwks.json ]; then \
+# 		echo "❌ $(YELLOW)api/jwks.json not found!$(RESET)"; \
+# 		echo ""; \
+# 		echo "$(BOLD)🌿 GROVE EMPLOYEES: Download the JWKS file from 1Password:$(RESET)"; \
+# 		echo "   $(CYAN)make grove-download-jwks$(RESET)"; \
+# 		echo ""; \
+# 		echo "$(YELLOW)Note: Requires 1Password CLI (op) to be installed and authenticated.$(RESET)"; \
+# 		exit 1; \
+# 	fi
+# 	@echo "✅ api/jwks.json found"
 
 # ============================================================================
 # DATA HYDRATION
