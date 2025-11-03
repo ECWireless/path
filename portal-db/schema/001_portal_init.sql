@@ -423,6 +423,35 @@ INSERT INTO networks (network_id) VALUES
     ('pocket-beta'),
     ('pocket-alpha');
 
+-- Insert default RBAC roles
+INSERT INTO rbac (role_name, permissions) VALUES
+    ('OWNER', ARRAY['read', 'write', 'admin']),
+    ('ADMIN', ARRAY['read', 'write', 'admin']),
+    ('MEMBER', ARRAY['read', 'write']),
+    ('VIEWER', ARRAY['read'])
+ON CONFLICT DO NOTHING;
+
+COMMENT ON TABLE rbac IS 'RBAC roles: OWNER (full control), ADMIN (manage users/apps), MEMBER (read/write), VIEWER (read-only)';
+
+-- Insert default portal plan
+INSERT INTO portal_plans (
+    portal_plan_type,
+    portal_plan_type_description,
+    plan_usage_limit,
+    plan_usage_limit_interval,
+    plan_rate_limit_rps,
+    plan_application_limit
+) VALUES
+    (
+        'PLAN_FREE',
+        'Free tier with basic access and rate limits',
+        250000,           -- 250k relays per day
+        'day',
+        10,               -- 10 RPS
+        2                 -- 2 applications
+    )
+ON CONFLICT (portal_plan_type) DO NOTHING;
+
 -- ============================================================================
 -- INDEXES
 -- ============================================================================
